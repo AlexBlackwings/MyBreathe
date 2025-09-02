@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Минута дыхания</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background: #000;
+            color: #fff;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            overflow: hidden;
+            touch-action: none;
+        }
+        
+        .app-container {
+            position: relative;
+            width: 320px;
+            height: 568px;
+            background: #000;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        
+        .title {
+            font-size: 22px;
+            font-weight: 600;
+            margin-bottom: 30px;
+            text-align: center;
+            color: #0f9d58;
+        }
+        
+        .breathing-circle-container {
+            width: 200px;
+            height: 200px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin: 30px 0;
+        }
+        
+        .breathing-circle {
+            width: 100px;
+            height: 100px;
+            background: rgba(15, 157, 88, 0.2);
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            border: 2px solid #0f9d58;
+            transition: all 1s ease;
+            box-shadow: 0 0 20px rgba(15, 157, 88, 0.3);
+        }
+        
+        .breathing-circle.inhale {
+            animation: inflate 4s linear forwards;
+        }
+        
+        .breathing-circle.hold {
+            animation: hold 7s linear forwards;
+        }
+        
+        .breathing-circle.exhale {
+            animation: deflate 8s linear forwards;
+        }
+        
+        @keyframes inflate {
+            0% { transform: scale(1); background: rgba(15, 157, 88, 0.2); }
+            100% { transform: scale(1.8); background: rgba(15, 157, 88, 0.4); }
+        }
+        
+        @keyframes hold {
+            0% { transform: scale(1.8); background: rgba(15, 157, 88, 0.4); }
+            100% { transform: scale(1.8); background: rgba(15, 157, 88, 0.5); }
+        }
+        
+        @keyframes deflate {
+            0% { transform: scale(1.8); background: rgba(15, 157, 88, 0.5); }
+            100% { transform: scale(1); background: rgba(15, 157, 88, 0.2); }
+        }
+        
+        .instruction {
+            font-size: 18px;
+            margin: 20px 0;
+            font-weight: 500;
+            color: #0f9d58;
+            min-height: 28px;
+        }
+        
+        .timer {
+            font-size: 48px;
+            font-weight: bold;
+            color: #fff;
+            margin: 10px 0;
+        }
+        
+        button {
+            padding: 14px 30px;
+            background: #0f9d58;
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 18px;
+            font-weight: bold;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(15, 157, 88, 0.4);
+            margin-top: 20px;
+            transition: background 0.2s;
+        }
+        
+        button:active {
+            background: #0d8a4d;
+        }
+        
+        .stats {
+            margin-top: 20px;
+            font-size: 14px;
+            color: #aaa;
+        }
+        
+        .share-btn {
+            background: #1976d2;
+            margin-top: 10px;
+        }
+        
+        .share-btn:active {
+            background: #1565c0;
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <div class="title">Осознанное дыхание</div>
+        
+        <div class="breathing-circle-container">
+            <div class="breathing-circle" id="circle"></div>
+        </div>
+        
+        <div class="instruction" id="instruction">Готовы начать?</div>
+        <div class="timer" id="timer">0</div>
+        
+        <button id="startBtn">Начать дыхание</button>
+        <button id="shareBtn" class="share-btn" style="display:none">Поделиться</button>
+        
+        <div class="stats">
+            Сегодня вы дышали <span id="sessionCount">0</span> раз
+        </div>
+    </div>
+
+    <script>
+        // Инициализация Telegram WebApp
+        const tg = window.Telegram?.WebApp;
+        tg.expand();
+        tg.ready();
+
+        // Элементы
+        const circle = document.getElementById('circle');
+        const instruction = document.getElementById('instruction');
+        const timer = document.getElementById('timer');
+        const startBtn = document.getElementById('startBtn');
+        const shareBtn = document.getElementById('shareBtn');
+        const sessionCountEl = document.getElementById('sessionCount');
+
+        // Состояние
+        let sessionCount = parseInt(localStorage.getItem('breathSessions') || '0');
+        sessionCountEl.textContent = sessionCount;
+
+        let isRunning = false;
+        let currentPhase = '';
+        let timeLeft = 0;
+        let interval;
+
+        // Фазы дыхания (секунды)
+        const phases = {
+            inhale: { time: 4, text: 'Вдох', class: 'inhale' },
+            hold: { time: 7, text: 'Задержка', class: 'hold' },
+            exhale: { time: 8, text: 'Выдох', class: 'exhale' }
+        };
+
+        function startBreathing() {
+            if (isRunning) return;
+            
+            isRunning = true;
+            startBtn.textContent = 'Идёт дыхание...';
+            shareBtn.style.display = 'none';
+            
+            const sequence = ['inhale', 'hold', 'exhale'];
+            let phaseIndex = 0;
+            
+            function nextPhase() {
+                if (phaseIndex >= sequence.length) {
+                    finishBreathing();
+                    return;
+                }
+                
+                const phaseKey = sequence[phaseIndex];
+                const phase = phases[phaseKey];
+                
+                currentPhase = phaseKey;
+                timeLeft = phase.time;
+                instruction.textContent = phase.text;
+                timer.textContent = timeLeft;
+                circle.className = 'breathing-circle ' + phase.class;
+                
+                clearInterval(interval);
+                interval = setInterval(() => {
+                    timeLeft--;
+                    timer.textContent = timeLeft;
+                    
+                    if (timeLeft <= 0) {
+                        phaseIndex++;
+                        nextPhase();
+                    }
+                }, 1000);
+            }
+            
+            nextPhase();
+        }
+
+        function finishBreathing() {
+            isRunning = false;
+            clearInterval(interval);
+            circle.className = 'breathing-circle';
+            instruction.textContent = 'Отлично! Вы только что сделали осознанное дыхание.';
+            timer.textContent = '0';
+            startBtn.textContent = 'Повторить';
+            shareBtn.style.display = 'block';
+            
+            // Увеличиваем счётчик
+            sessionCount++;
+            sessionCountEl.textContent = sessionCount;
+            localStorage.setItem('breathSessions', sessionCount);
+            
+            // Вибрация (если поддерживается)
+            if (navigator.vibrate) {
+                navigator.vibrate([200, 100, 200]);
+            }
+        }
+
+        function shareResult() {
+            const text = `Я только что сделал осознанное дыхание по методу 4-7-8. Это помогает снять стресс и сосредоточиться. Попробуй и ты!`;
+            const url = 'https://t.me/your_bot_name'; // замените на ваш бот
+            tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(text)}`);
+        }
+
+        // Обработчики
+        startBtn.addEventListener('click', startBreathing);
+        shareBtn.addEventListener('click', shareResult);
+
+        // При старте — сбрасываем
+        circle.className = 'breathing-circle';
+    </script>
+</body>
+</html>
